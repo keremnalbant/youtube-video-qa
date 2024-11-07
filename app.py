@@ -5,14 +5,36 @@ from urllib.parse import parse_qs, urlparse
 import streamlit as st
 import weaviate
 from langchain.prompts import ChatPromptTemplate
-from langchain.schema import StrOutputParser
 from langchain.schema.runnable import RunnablePassthrough
 from langchain_aws import BedrockEmbeddings, ChatBedrock
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_weaviate import WeaviateVectorStore
+from pydantic import BaseModel, Field
 from weaviate.auth import AuthApiKey
 from youtube_transcript_api import YouTubeTranscriptApi
+
+
+class Citation(BaseModel):
+    """Citation from a YouTube video"""
+    timestamp: str = Field(
+        description="The timestamp in the video where this information appears (in format MM:SS or HH:MM:SS)"
+    )
+    quote: str = Field(
+        description="The relevant quote from the video that answers the question"
+    )
+    video_id: str = Field(
+        description="The YouTube video ID where this information appears"
+    )
+
+class AnswerWithCitations(BaseModel):
+    """Answer with citations from YouTube videos"""
+    answer: str = Field(
+        description="The answer to the user's question"
+    )
+    citations: List[Citation] = Field(
+        description="List of citations that support the answer"
+    )
 
 # Initialize environment
 EMBEDDING_MODEL_ID = "amazon.titan-embed-text-v2:0"
@@ -49,6 +71,25 @@ def get_transcript_with_timestamps(video_id: str) -> List[Dict]:
         st.error(f"Error fetching transcript: {str(e)}")
         return None
     
+def get_video_url_with_timestamp(video_id: str, timestamp: str) -> str:
+    """Convert timestamp to seconds and generate YouTube URL"""
+    # Convert timestamp (MM:SS or HH:MM:SS) to seconds
+    parts = timestamp.split(':')
+    if len(parts) == 2:
+        minutes, seconds = parts
+        total_seconds = int(minutes) * 60 + int(seconds)
+    else:
+        hours, minutes, seconds = parts
+        total_seconds = int(hours) * 3600 + int(minutes) * 60 + int(seconds)
+    
+    return f"https://www.youtube.com/watch?v={video_id}&t={total_seconds}"
+
+def format_time(seconds: float) -> str:
+    """Convert seconds to MM:SS format"""
+    minutes = int(seconds // 60)
+    seconds = int(seconds % 60)
+    return f"{minutes:02d}:{seconds:02d}"
+
 def process_transcript(transcript_entries: List[Dict]) -> List[Document]:
     # Create the text content while preserving timestamp metadata
     text_content = []
@@ -112,7 +153,7 @@ def setup_vectorstore(chunks: List[Document], video_id: str):
     
     return vectorstore
 
-def create_rag_chain(retriever):
+def create_chain(retriever):
     """Create RAG chain with source citation"""
     llm = ChatBedrock(
         model=LLM_MODEL_ID,
@@ -120,30 +161,28 @@ def create_rag_chain(retriever):
         provider="anthropic",
     )
     
-    template = """Answer the question based only on the following context. If you cannot answer the question based on the context, say "I cannot answer this based on the video content." Include relevant timestamps from the video in your answer.
+    # Modify the prompt to request structured output
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a helpful assistant that answers questions about YouTube videos.
+        For each answer, provide relevant timestamps and quotes from the videos.
+        Make sure to extract exact timestamps where the information appears."""),
+        ("human", """
+         Context: {docs}
 
-Context: {context}
+         Question: {question}""")
+    ])
 
-Question: {question}
-
-Answer: """
-    
-    prompt = ChatPromptTemplate.from_template(template)
-    
     def format_docs(docs):
         return "\n\n".join(
             f"Content: {doc.page_content}\nTimestamp: {doc.metadata['start']} seconds"
             for doc in docs
         )
-    
-    # Return both the chain and the formatting function
-    return prompt, format_docs, llm
 
-def format_time(seconds: float) -> str:
-    """Convert seconds to MM:SS format"""
-    minutes = int(seconds // 60)
-    seconds = int(seconds % 60)
-    return f"{minutes:02d}:{seconds:02d}"
+    # Use structured output with the LLM
+    structured_llm = llm.with_structured_output(AnswerWithCitations)
+
+    return prompt, format_docs, structured_llm
+
 
 # Streamlit UI
 st.title("YouTube Video Q&A")
@@ -171,7 +210,7 @@ if url and question:
                 chunks = process_transcript(transcript)
                 vectorstore = setup_vectorstore(chunks, video_id)
                 retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-                prompt, format_docs, llm = create_rag_chain(retriever)
+                prompt, format_docs, structured_llm = create_chain(retriever)
                 
                 # Get retrieved documents and format them
                 retrieved_docs = retriever.get_relevant_documents(question)
@@ -179,7 +218,7 @@ if url and question:
                 
                 # Create the formatted prompt
                 formatted_prompt = prompt.format(
-                    context=formatted_context,
+                    docs=formatted_context,
                     question=question
                 )
                 
@@ -194,10 +233,9 @@ if url and question:
                 
                 # Create the chain
                 rag_chain = (
-                    {"context": retriever | format_docs, "question": RunnablePassthrough()}
+                    {"docs": retriever | format_docs, "question": RunnablePassthrough()}
                     | prompt
-                    | llm
-                    | StrOutputParser()
+                    | structured_llm
                 )
                 
                 # Create a container for the output
@@ -207,5 +245,5 @@ if url and question:
                 
                 with st.spinner("Generating answer..."):
                     for chunk in rag_chain.stream(question):
-                        accumulated_answer += chunk
-                        output_container.markdown(accumulated_answer)
+                        accumulated_answer += chunk # type: ignore
+                        output_container.json(accumulated_answer)
