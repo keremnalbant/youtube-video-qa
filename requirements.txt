@@ -5,3 +5,4 @@ langchain-weaviate==0.0.3
 streamlit==1.40.0
 weaviate-client==4.9.3
 youtube-transcript-api==0.6.2
+python-dotenv>=1.0.1
