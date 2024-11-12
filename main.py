@@ -117,17 +117,32 @@ def display_video(answer: CitedAnswer, url):
 
 st.title("YouTube Video Q&A")
 
+# Initialize button clicked state
+if 'button_clicked' not in st.session_state:
+    st.session_state.button_clicked = False
+
+def on_button_click():
+    st.session_state.button_clicked = True
+
 url = st.text_input("Enter YouTube Video URL:")
 question = st.text_input("Enter your question:")
-video_id = None
-if url and question:
-    try: 
+
+# Only enable button if both fields are filled
+button_disabled = not url or not question
+st.button("Ask AI", disabled=button_disabled, type="primary", on_click=on_button_click)
+
+# Only process if button was explicitly clicked
+if st.session_state.button_clicked:
+    try:
         video_id = get_video_id(url)
     except Exception as e:
         logger.error(f"Error extracting video ID: {str(e)}")
         st.error(f"An error occurred while extracting the video ID: {str(e)}")
-
-    if video_id:
-        answer_question(video_id, url, question)
     else:
-        st.error("Invalid YouTube URL")
+        if video_id:
+            answer_question(video_id, url, question)
+        else:
+            st.error("Invalid YouTube URL")
+    
+    # Reset button state
+    st.session_state.button_clicked = False
