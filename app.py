@@ -1,4 +1,5 @@
 # app.py
+import re
 from typing import Dict, List
 from urllib.parse import parse_qs, urlparse
 
@@ -40,7 +41,8 @@ class AnswerWithCitations(BaseModel):
 EMBEDDING_MODEL_ID = "amazon.titan-embed-text-v2:0"
 LLM_MODEL_ID = "eu.anthropic.claude-3-5-sonnet-20240620-v1:0"
 
-WEAVIATE_URL = "https://xxx.gcp.weaviate.cloud"
+
+WEAVIATE_URL = "https://xxx.weaviate.cloud"
 WEAVIATE_AUTH_KEY = "xxx"
 
 headers = {
@@ -70,19 +72,6 @@ def get_transcript_with_timestamps(video_id: str) -> List[Dict]:
     except Exception as e:
         st.error(f"Error fetching transcript: {str(e)}")
         return None
-    
-def get_video_url_with_timestamp(video_id: str, timestamp: str) -> str:
-    """Convert timestamp to seconds and generate YouTube URL"""
-    # Convert timestamp (MM:SS or HH:MM:SS) to seconds
-    parts = timestamp.split(':')
-    if len(parts) == 2:
-        minutes, seconds = parts
-        total_seconds = int(minutes) * 60 + int(seconds)
-    else:
-        hours, minutes, seconds = parts
-        total_seconds = int(hours) * 3600 + int(minutes) * 60 + int(seconds)
-    
-    return f"https://www.youtube.com/watch?v={video_id}&t={total_seconds}"
 
 def format_time(seconds: float) -> str:
     """Convert seconds to MM:SS format"""
@@ -183,6 +172,18 @@ def create_chain(retriever):
 
     return prompt, format_docs, structured_llm
 
+def format_youtube_url_with_timestamp(url, timestamp_seconds):
+    """Add timestamp to YouTube URL"""
+    if 'youtube.com' not in url and 'youtu.be' not in url:
+        return url
+        
+    # Remove existing timestamp if present
+    url = re.sub(r'[?&]t=\d+s', '', url)
+    
+    # Add new timestamp
+    separator = '?' if '?' not in url else '&'
+    return f"{url}{separator}t={timestamp_seconds}s"
+
 
 # Streamlit UI
 st.title("YouTube Video Q&A")
@@ -206,14 +207,13 @@ if url and question:
                         transcript_text += f"**[{timestamp}]** {entry['text']}\n\n"
                     st.markdown(transcript_text)
                 
-                print(transcript)
                 chunks = process_transcript(transcript)
                 vectorstore = setup_vectorstore(chunks, video_id)
                 retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
                 prompt, format_docs, structured_llm = create_chain(retriever)
                 
                 # Get retrieved documents and format them
-                retrieved_docs = retriever.get_relevant_documents(question)
+                retrieved_docs = retriever.invoke(question)
                 formatted_context = format_docs(retrieved_docs)
                 
                 # Create the formatted prompt
@@ -238,12 +238,21 @@ if url and question:
                     | structured_llm
                 )
                 
-                # Create a container for the output
-                st.markdown("### Answer")
-                output_container = st.empty()
-                accumulated_answer = ""
+                # Create containers for output
+                answer_container = st.empty()
+                video_container = st.empty()
                 
                 with st.spinner("Generating answer..."):
-                    for chunk in rag_chain.stream(question):
-                        accumulated_answer += chunk # type: ignore
-                        output_container.json(accumulated_answer)
+                    answer = rag_chain.invoke(question)
+                    client.close()
+                    
+                    # Display the answer text
+                    answer_container.markdown(answer.answer)
+                    
+                    # Convert timestamp to seconds and display video
+                    if answer.citations and answer.citations[0].timestamp:
+                        # timestamp is in MM:SS format
+                        second = answer.citations[0].timestamp.split(':')[0]
+                        
+                        video_url = format_youtube_url_with_timestamp(url, int(second))
+                        video_container.video(data=video_url, start_time=int(second))
