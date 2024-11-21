@@ -7,7 +7,7 @@ class Citation(BaseModel):
     """Citation from a YouTube video"""
 
     timestamp: str = Field(
-        description="The timestamp in the video where this information appears (in format SS:MS)"
+        description="The timestamp in the video where this information appears (in the format MM:SS)"
     )
     quote: str = Field(
         description="The relevant quote from the video that answers the question"

@@ -14,17 +14,17 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TranscriptItem:
     text: str
-    start: float
+    start_time: float
     duration: float
 
     @property
     def end_time(self) -> float:
-        return self.start + self.duration
+        return self.start_time + self.duration
 
 
 @dataclass
 class TranscriptChunkMetadata:
-    start: float
+    start_time: float
     end_time: float
 
 
@@ -118,7 +118,14 @@ def get_transcript_with_timestamps(video_id: str) -> List[TranscriptItem]:
     """
     try:
         transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        return [TranscriptItem(**entry) for entry in transcript]
+        return [
+            TranscriptItem(
+                start_time=entry["start"],
+                duration=entry["duration"],
+                text=entry["text"],
+            )
+            for entry in transcript
+        ]
     except Exception as e:
         logger.error(f"Error fetching transcript: {str(e)}")
         raise YouTubeTranscriptError(f"Could not fetch transcript: {str(e)}")
@@ -154,13 +161,13 @@ def prepare_chunks_for_transcript(
     try:
         metadata_map = {
             entry.text: TranscriptChunkMetadata(
-                start=entry.start, end_time=entry.end_time
+                start_time=entry.start_time, end_time=entry.end_time
             )
             for entry in transcript_items
         }
 
         full_text = "\n".join(
-            f"[Timestamp: {entry.start} - {entry.end_time}] {entry.text}"
+            f"[Timestamp: {format_time(entry.start_time)} - {format_time(entry.end_time)}] {entry.text}"
             for entry in transcript_items
         )
 
@@ -183,7 +190,7 @@ def prepare_chunks_for_transcript(
                     Document(
                         page_content=chunk,
                         metadata={
-                            "start": start_metadata.start,
+                            "start_time": start_metadata.start_time,
                             "end_time": end_metadata.end_time,
                         },
                     )

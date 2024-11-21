@@ -58,7 +58,7 @@ def answer_question(video_id: str, url: str, question: str):
                         (
                             "system",
                             """You are a helpful assistant that answers questions about YouTube videos.
-                You will be given transcript(captions/subtitles) of youtube videos with timestamps in the format SS:MS.
+                You will be given transcript(captions/subtitles) of youtube videos along with the timestamps (MM:SS).
                 For each answer, provide relevant timestamps and quotes from the videos.
                 Make sure to extract exact timestamps where the information appears.""",
                         ),
@@ -102,13 +102,13 @@ def display_full_transcript(transcript: List[TranscriptItem]):
         st.markdown("### Complete Video Transcript")
         transcript_text = ""
         for entry in transcript:
-            timestamp = format_time(entry.start)
+            timestamp = format_time(entry.start_time)
             transcript_text += f"**[{timestamp}]** *{entry.text}*\n\n"
         st.markdown(transcript_text)
 
 
 def display_context_and_prompt(formatted_context: str, prompt: str, question: str):
-    with st.expander("🔍 Retrieved Context", expanded=False):
+    with st.expander("🔍 Retrieved Context & Augmented Prompt", expanded=False):
         st.markdown("### Retrieved Context")
         st.markdown(formatted_context)
         st.markdown("### Prompt")
@@ -129,11 +129,11 @@ def display_answer(answer: CitedAnswer):
 
 def display_video(answer: CitedAnswer, url):
     with st.container():
-        timestamp_second = int(answer.citations[0].timestamp.split(":")[0])
+        timestamp_seconds = int(answer.citations[0].timestamp.split(":")[1])
         st.markdown("### Video")
-        video_url = format_youtube_url_with_timestamp(url, timestamp_second)
+        video_url = format_youtube_url_with_timestamp(url, timestamp_seconds)
         logger.debug(f"Video URL: {video_url}")
-        st.video(video_url, start_time=timestamp_second)
+        st.video(video_url, start_time=timestamp_seconds)
 
 
 st.title("YouTube Video Q&A")
